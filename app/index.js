@@ -6,7 +6,6 @@ const network = require("./network");
 const file = require("./file");
 const discord = require("./discord");
 
-
 /** @type {BrowserWindow} */
 let window;
 /** @type {Electron.UtilityProcess} */
@@ -15,18 +14,23 @@ let gameserver;
 /** @type {import("./file").Statistics} */
 let statistics;
 
+app.commandLine.appendSwitch('enable-experimental-web-platform-features');
+app.commandLine.appendSwitch('enable-web-bluetooth');
+app.commandLine.appendSwitch('enable-bluetooth');
+app.commandLine.appendSwitch('enable-hid');
+app.commandLine.appendSwitch('enable-generic-sensor-extra-classes');
 app.setName(displayName);
 if (process.platform === "darwin") {
     Menu.setApplicationMenu(Menu.buildFromTemplate([{
         label: app.name,
         submenu: [
-            {role: "about"},
-            {type: "separator"},
-            {role: "hide"},
-            {role: "hideOthers"},
-            {role: "unhide"},
-            {type: "separator"},
-            {role: "quit"}
+            { role: "about" },
+            { type: "separator" },
+            { role: "hide" },
+            { role: "hideOthers" },
+            { role: "unhide" },
+            { type: "separator" },
+            { role: "quit" }
         ]
     }]));
 }
@@ -52,6 +56,8 @@ app.whenReady().then(() => {
         webPreferences: {
             sandbox: false,
             devTools: !app.isPackaged,
+            experimentalFeatures: true,
+            enableBlinkFeatures: "WebHID,WebBluetooth",
             preload: join(__dirname, "preload", "index.js")
         }
     });
@@ -61,13 +67,35 @@ app.whenReady().then(() => {
     window.setTitle(app.name);
     window.loadFile(join(__dirname, "window", "index.html"));
     window.setIcon(join(__dirname, "img", "icons", "128x128.png"));
+    if (!app.isPackaged && (
+        process.argv.includes("--devtools") ||
+        process.argv.includes("-dt") ||
+        process.argv.includes("--inspect") ||
+        process.argv.includes("-i") ||
+        process.argv.includes("-d")
+    )) window.webContents.openDevTools();
+
+    window.webContents.on('select-bluetooth-device', (event, deviceList, callback) => {
+        console.log("Available Bluetooth devices:", deviceList.filter(d => !d.deviceName.includes("Unknown")));
+        event.preventDefault();
+        const result = deviceList.find((device) => {
+            // return device.deviceName.startsWith("Nintendo RVL-CNT-01");
+            return true;
+        })
+        if (result) {
+            callback(result.deviceId);
+        } else {
+            callback('');
+        }
+    });
+    console.log("Bluetooth support enabled.");
 
     window.on("ready-to-show", () => {
         let totalWidth = 0;
         for (const scr of screen.getAllDisplays()) totalWidth += scr.bounds.width;
         window.webContents.send("start",
             file.settings.get(),
-            {game: version, electron: process.versions.electron, chromium: process.versions.chrome},
+            { game: version, electron: process.versions.electron, chromium: process.versions.chrome },
             file.space(),
             totalWidth
         );
@@ -132,8 +160,8 @@ app.whenReady().then(() => {
     ipcMain.on("get-replays", () => window.webContents.send("replay-list", file.replays.list()));
     ipcMain.on("load-replay", (_e, name) => {
         file.replays.validate(name)
-         .then(() => window.webContents.send("replay-loaded", file.replays.read(name)))
-         .catch((err) => window.webContents.send("replay-error", err));
+            .then(() => window.webContents.send("replay-loaded", file.replays.read(name)))
+            .catch((err) => window.webContents.send("replay-error", err));
     });
     ipcMain.on("save-replay", (_e, name, data) => {
         file.replays.write(`${name}.ssb2replay`, data, () => window.webContents.send("replay-saved"));
@@ -142,21 +170,21 @@ app.whenReady().then(() => {
         dialog.showSaveDialog(window, {
             title: "Export replay",
             defaultPath: join(app.getPath("home"), name),
-            filters: [{name: "Super Splash Bros 2 Replay", extensions: ["ssb2replay"]}]
+            filters: [{ name: "Super Splash Bros 2 Replay", extensions: ["ssb2replay"] }]
         }).then((res) => {
             if (res.canceled) return;
 
             window.webContents.send("replay-export-started");
             file.replays.export(name, res.filePath)
-             .then((path) => window.webContents.send("replay-export-finished", path))
-             .catch((err) => window.webContents.send("replay-error", err));
+                .then((path) => window.webContents.send("replay-export-finished", path))
+                .catch((err) => window.webContents.send("replay-error", err));
         });
     });
     ipcMain.on("import-replay", () => {
         dialog.showOpenDialog(window, {
             title: "Import and watch replay",
             defaultPath: app.getPath("home"),
-            filters: [{name: "Super Splash Bros 2 Replay", extensions: ["ssb2replay"]}],
+            filters: [{ name: "Super Splash Bros 2 Replay", extensions: ["ssb2replay"] }],
             properties: ["openFile"]
         }).then((res) => {
             if (res.canceled) return;
@@ -169,9 +197,11 @@ app.whenReady().then(() => {
     ipcMain.on("discord-activity-update", (_e, state, playerIndex, playerName, partySize, partyMax, startTimestamp) => {
         discord({
             state,
-            player: {index: playerIndex, name: playerName},
-            party: {size: partySize, max: partyMax},
+            player: { index: playerIndex, name: playerName },
+            party: { size: partySize, max: partyMax },
             startTimestamp
         });
     });
+
+    ipcMain.handle("get-argv", () => process.argv);
 });

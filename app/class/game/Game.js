@@ -10,14 +10,44 @@ const Circle = require("./Circle");
 const Rocket = require("./Rocket");
 const Splash = require("./Splash");
 const Fish = require("./Fish");
+const Supply = require("./Supply");
 const Exclusive = require("./Exclusive");
 const PoopBomb = require("./PoopBomb");
 const Geyser = require("./Geyser");
 const { colors } = require("../../preload/theme");
 const { version } = require("../../../package.json");
+const { ipcRenderer } = require("electron");
+
+/**
+ * @type {string[]}
+ */
+let argv = [];
+
+if (typeof window !== "undefined") {
+    console.log("running in preload");
+    document.addEventListener("DOMContentLoaded", _ => {
+        ipcRenderer.invoke("get-argv").then(
+            /**
+             * @param {string[]} _argv 
+             */
+            _argv => {
+                argv = _argv;
+                console.log(argv);
+                if (argv.includes("--instant-water") || argv.includes("-iw") || argv.includes("--debug") || argv.includes("-d")) {
+                    Game.floodDelay = 0;
+                }
+                for (const arg of argv) {
+                    if (arg.startsWith("--flood-delay=")) {
+                        Game.floodDelay = parseInt(arg.split("=")[1]);
+                    }
+                }
+            }
+        );
+    });
+}
 
 class Game {
-    static floodDelay = 180;
+    static floodDelay = 90;
     static floodMaxLevel = -400;
 
     static powerups = [{
@@ -100,6 +130,7 @@ class Game {
     /** @type {Geyser[]} */
     geysers;
     fish;
+    supply;
     spawnCoordinates;
     startState;
     startedOn;
@@ -118,6 +149,7 @@ class Game {
     /** @type {null | number} */
     winner;
     ping;
+    snowStormActive = false;
 
     /**
      * @constructor
@@ -140,6 +172,12 @@ class Game {
             spawned: false,
             lastSpawned: false
         };
+        this.supply = {
+            /** @type {Supply | null} */
+            item: null,
+            spawned: false,
+            lastSpawned: false
+        }
         if (mode === "freeplay") {
             this.dummyDifficulty = 0;
             this.chaosPowerupsGranted = false;
@@ -167,7 +205,7 @@ class Game {
 
             this.players[playerIndex].x = this.spawnCoordinates[playerIndex].x;
             this.players[playerIndex].y = this.spawnCoordinates[playerIndex].y;
-            this.players[playerIndex].lives = 1;
+            this.players[playerIndex].lives = Infinity;
             this.players[playerIndex].attacks.rocket.count = 0;
             
             this.players[enemyIndex].x = this.spawnCoordinates[enemyIndex].x;
@@ -318,18 +356,68 @@ class Game {
         }
 
         for (const p1 of this.getPlayers()) {
-            p1.update();
+            p1.update(this.theme);
+            const platform = {
+                x: this.supply.item?.x,
+                y: this.supply.item?.y,
+                w: Supply.width,
+                h: Supply.height
+            }
+
+            if (p1.x < platform.x + platform.w && p1.x + p1.size > platform.x &&
+             p1.y < platform.y + platform.h && p1.y + p1.size > platform.y) {
+                if (p1.lx + p1.size <= platform.x) {
+                    p1.x = platform.x - p1.size;
+                    p1.vx = 0;
+                } else if (p1.lx >= platform.x + platform.w) {
+                    p1.x = platform.x + platform.w;
+                    p1.vx = 0;
+                } else if (platform.y + platform.h <= p1.ly) {
+                    p1.y = platform.y + platform.h;
+                    p1.vy = 0;
+                } else {
+                    if (p1.y > platform.y + platform.h) {
+                        p1.vy = 0;
+                    }else {
+                        p1.y = platform.y - p1.size;
+                    }
+                    p1.jump.used = p1.vy = 0;
+                    p1.jump.active = false;
+                }
+            }
+
+            if (p1.x < this.supply.item?.x + Supply.width &&
+                p1.x + p1.size > this.supply.item?.x &&
+                p1.y < this.supply.item?.y + Supply.height &&
+                p1.y + p1.size > this.supply.item?.y
+            ) {
+                p1.vx = 0;
+                p1.vy = 0;
+            }
 
             for (const p2 of this.getPlayers()) {
                 if (p1.index === p2.index) continue;
 
                 if (p1.x < p2.x + p2.size && p1.x + p1.size > p2.x &&
                  p1.y < p2.y + p2.size && p1.y + p1.size > p2.y) {
-                    p1.vx /= 1.06;
-                    p2.vx /= 1.06;
-                    if (p1.vy < -1 && p2.vy < -1) {
-                        p1.vy /= 1.05;
-                        p2.vy /= 1.05;
+                    if (this.theme === "snowy") {
+                        // p1.vx /= 2;
+                        if (p1.vx < 0) {
+                            if (p2.vx > p1.vx) {
+                                p2.vx = p1.vx;
+                            }
+                        }else {
+                            if (p2.vx < p1.vx) {
+                                p2.vx = p1.vx;
+                            }
+                        }
+                    } else {
+                        p1.vx /= 1.06;
+                        p2.vx /= 1.06;
+                        if (p1.vy < -1 && p2.vy < -1) {
+                            p1.vy /= 1.05;
+                            p2.vy /= 1.05;
+                        }
                     }
                 }
 
@@ -341,28 +429,7 @@ class Game {
 
             if (p1.y > 625 + this.floodLevel) {
                 this.splashes.push(new Splash(p1.x + p1.size / 2, this.floodLevel));
-                if (this.ping - p1.respawn >= p1.spawnProtection && this.winner === null) {
-                    p1.lives--;
-                    p1.hit.percentage = 0;
-                    p1.respawn = this.ping;
-                    p1.powerup.available = p1.powerup.active = false;
-                    p1.stats.timesSplashed++;
-
-                    if (this.mode === "tutorial") {
-                        if (this.hostIndex === p1.index) p1.lives = 1;
-                        else this.tutorialPhase++;
-                    }
-                }
-                if (p1.lives >= 1) {
-                    const respawnCoordinates = (this.floodLevel < 0) ? {
-                        x: Math.random() * 400 + 393,
-                        y: -50
-                    } : this.spawnCoordinates[p1.index];
-
-                    p1.x = respawnCoordinates.x;
-                    p1.y = respawnCoordinates.y;
-                    p1.vx = p1.vy = 0;
-                }
+                p1.kill(this);
             }
 
             if (p1.lives === 0) continue;
@@ -441,6 +508,14 @@ class Game {
                     this.fish.item.collides = true;
                 } else if (this.fish.item.takenBy === p1.index) this.fish.item.collides = this.fish.item.collidesWithTaker = false;
             }
+            if (this.supply.item) {
+                if (p1.x < (this.supply.item.x - 10) + Supply.width + 20 && p1.x + p1.size > this.supply.item.x - 10 && this.supply.item.takeable &&
+                 p1.y < (this.supply.item.y - 10) + Supply.height + 20 && p1.y + p1.size > this.supply.item.y - 10 && !p1.powerup.available && !p1.powerup.active) {
+                    if (this.supply.item.takenBy === -1) this.supply.item.takenBy = p1.index;
+                    if (this.supply.item.takenBy === p1.index) this.supply.item.collidesWithTaker = true;
+                    this.supply.item.collides = true;
+                } else if (this.supply.item.takenBy === p1.index) this.supply.item.collides = this.supply.item.collidesWithTaker = false;
+            }
 
             p1.powerup.meetsCondition = Game.powerups[p1.powerup.selected].condition(p1);
             if (p1.keys.powerup && p1.powerup.available && !p1.powerup.active && p1.powerup.meetsCondition) {
@@ -461,8 +536,8 @@ class Game {
                     this.circles.push(new Circle({x: p1.x + p1.size / 2, y: p1.y + p1.size / 2, color: colors.squash, vr: 15, va: 0.009, shake: true}));
                     for (const p2 of this.getPlayers())
                         p2.damage(this.ping, 40, 80, (p1.index === p2.index) ? 0 : (p1.x < p2.x) ? 15 : -15);
-                    if (Math.random() >= 0.85) {
-                        for (let i=0; i<2; i++) this.geysers.push(new Geyser(i * 1250));
+                    if (Math.random() <= 0.8 + (0.2 - 0.8) * ((this.floodLevel + 625) / 625)) {
+                        for (let i=0; i<2; i++) this.geysers.push(new Geyser(i * 1250, true, this.floodLevel));
                     }
                 }
             } else if (!isFinite(p1.attacks.rocket.count)) {
@@ -532,18 +607,24 @@ class Game {
         }
         for (let i=0; i<this.poopBombs.length;) {
             if (this.poopBombs[i].update(625 + this.floodLevel)) i++; else {
-                this.geysers.push(new Geyser(this.poopBombs[i].x));
+                this.geysers.push(new Geyser(this.poopBombs[i].x, false, this.floodLevel));
                 this.poopBombs.splice(i, 1);
             }
         }
-        for (let i=0; i<this.geysers.length;) {
+        for (let i=0; i<this.geysers.length;) {;
             const geyser = this.geysers[i];
+            this.floodLevel += geyser.speed / 50;
+            if (this.floodLevel > 0) this.floodLevel = 0;
             const updateResult = geyser.update();
 
             for (const p of this.getPlayers()) {
                 if (p.x < geyser.x + Geyser.width && p.x + p.size > geyser.x && p.y + p.size > geyser.y && !p.hasPowerup(Player.powerup.FORCE_FIELD)) {
-                    p.y -= Geyser.speed;
+                    p.y -= geyser.speed;
                     p.damage(this.ping, 1.2, 2.5);
+                    if (geyser.d) {
+                        // this.splashes.push(new Splash(p.x + p.size / 2, this.floodLevel));
+                        p.kill(this);
+                    }
                 }
             }
 
@@ -551,7 +632,10 @@ class Game {
             else this.geysers.splice(i, 1);
         }
 
-        if ((this.elapsed + Fish.start) % Fish.frequency < 1000 && !this.fish.spawned && this.startState <= 6 && this.dummyDifficulty !== 4) {
+        if (
+            (this.elapsed + Fish.start) % Fish.frequency < 1000 &&
+            !this.fish.spawned && this.startState <= 6 && this.dummyDifficulty !== 4
+        ) {
             this.fish.spawned = true;
             this.fish.item = new Fish(this.elapsed);
         } else this.fish.spawned = false;
@@ -568,6 +652,68 @@ class Game {
                 }));
             }
             this.fish.item = null;
+        }
+
+        if (
+            (this.elapsed + Supply.start) % Supply.frequency < 1000 && !this.supply.item && 
+            !this.supply.spawned && this.startState <= 6 && this.dummyDifficulty !== 4 &&
+            this.mode !== "tutorial"
+        ) {
+            this.supply.spawned = true;
+            this.supply.item = new Supply(this.elapsed);
+        } else this.supply.spawned = false;
+        if (this.supply.item && !this.supply.item.update(this.elapsed)) {
+            if (this.supply.item.takeValue === 1) {
+                const rand = Math.random();
+                const p = this.players[this.supply.item.takenBy];
+                if (this.supply.item.parachuteDeployed) {
+                    p.parachuteDeployed = true;
+                } 
+                // if ((this.theme === "foggy" || this.theme === "night") && Math.random() < .25) {
+                //     p.viewDistance += Math.floor(Math.random() * 100)
+                // }
+                else if (p.powerup.available === false && rand < 0.2 + 
+                    (p.lives === 5 ? 0.3 : 0) + 
+                    (p.attacks.rocket.count === Player.maxRockets ? 0.3 : 0)
+                ) {
+                    p.powerup.available = true;
+                }else if (
+                    p.lives !== 5 && rand < 0.6 + 
+                    (p.lives === 4 ? 0.2 : 0) + 
+                    (p.attacks.rocket.count === Player.maxRockets ? 0.2 : 0)
+                ) {
+                    p.lives = Math.min(p.lives + 1, 5);
+                } else {
+                    p.attacks.rocket.count = Math.min(p.attacks.rocket.count + 3, Player.maxRockets);
+                }
+                p.stats.supplysCollected++;
+                this.circles.push(new Circle({
+                    color: colors.ui.primary,
+                    x: this.supply.item.x + Supply.width / 2,
+                    y: this.supply.item.y + Supply.height / 2,
+                    vr: 19,
+                    va: 0.03
+                }));
+            }
+            this.supply.item = null;
+        }
+
+        if (Math.random() < 0.001 && this.floodLevel <= Game.floodMaxLevel) {
+            this.geysers.push(new Geyser(0, false, this.floodLevel));
+            this.geysers.push(new Geyser(1250, false, this.floodLevel));
+        }
+        if (this.theme === "snowy" && !this.snowStormActive && Math.random() < 0.001) {
+            this.snowStormActive = true;
+            setTimeout((() => {
+                this.snowStormActive = false;
+            }).bind(this), 10000);
+        }
+        if (this.snowStormActive) {
+            for (const p of this.players) {
+                p.vx -= Player.acceleration * (1.05);
+                p.damage(this.ping, 1, 2);
+                // p.vy /= 2;
+            }
         }
         if (this.mode === "tutorial") {
             this.floodLevel = 0;
@@ -599,8 +745,11 @@ class Game {
         }
     }
 
-    /** Export the game to clients. */
-    export() {
+    /** Export the game to clients.
+     * @param {number} playerIDX the index of the player to export to
+    */
+    export(playerIDX) {
+        const player = this.players[playerIDX];
         let connected = 0;
         for (const p of this.players) {
             if (p !== null && p.connected) connected++;
@@ -613,7 +762,29 @@ class Game {
             theme: this.theme,
             host: this.hostIndex,
             ping: this.ping,
-            players: this.players,
+            players: this.players.map(
+            /**
+             * 
+             * @param {Player} p 
+             * @returns {Player}
+             */
+            p => {
+                if (this.theme === "foggy" || this.snowStormActive || this.theme === "night") {
+                    if (p && player) {
+                        if (Math.hypot(p.x - (player.x), p.y - (player.y)) > player.viewDistance) {
+                            if (Math.abs(p.vy) + Math.abs(p.vx) >= 1 && this.theme === "foggy") {
+                                return p;
+                            }
+                            return {
+                                ...p,
+                                x: Math.abs(p.x - player.x) <= Math.abs(p.y - player.y) ? 800 : p.x >= player.x? 1e9 : -1e9,
+                                y: Math.abs(p.x - player.x) >= Math.abs(p.y - player.y) ? 0 : p.y >= player.y? 1e9 : -1e9
+                            };
+                        }
+                    }
+                }
+                return p;
+            }),
             attacks: this.attacks,
             circles: this.circles,
             rockets: this.rockets,
@@ -621,6 +792,7 @@ class Game {
             poopBombs: this.poopBombs,
             geysers: this.geysers,
             fish: this.fish,
+            supply: this.supply,
             connected,
             startedOn: this.startedOn,
             startState: this.startState,
@@ -630,7 +802,8 @@ class Game {
             floodLevel: this.floodLevel,
             flooded: (this.floodLevel === Game.floodMaxLevel),
             banCount: this.blacklist.length,
-            remaining
+            remaining,
+            snowStormActive: this.snowStormActive
         };
     }
 }

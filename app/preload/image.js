@@ -23,6 +23,8 @@ const { readdirSync } = require("fs");
  *  stars: HTMLImageElement,
  *  powerups: HTMLImageElement,
  *  water: HTMLImageElement,
+ *  supply: HTMLImageElement,
+ *  parachute: HTMLImageElement,
  *  _getAspectRatio: AspectRatioCallback
  * }}
  */

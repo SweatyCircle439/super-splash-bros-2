@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Dense Smoke with Cutout</title>
+    <style>
+        body {
+            margin: 0;
+            background: #000;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="smoke"></canvas>
+    <script>
+        const canvas = document.getElementById('smoke');
+        const ctx = canvas.getContext('2d');
+        let w, h;
+
+        function resize() {
+            w = canvas.width = innerWidth;
+            h = canvas.height = innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        const particleCount = 600;
+        const smokeParticles = [];
+        for (let i = 0; i < particleCount; i++) {
+            smokeParticles.push({
+                x: Math.random() * w,
+                y: Math.random() * h,
+                size: 50 + Math.random() * 80,
+                alpha: 0.01 + Math.random() * 0.02,
+                seed: Math.random() * 1000
+            });
+        }
+
+        let time = 0;
+        const cutout = { x: w / 2, y: h / 2, radius: innerHeight / 3 };
+
+        function noise(x, y, t) {
+            return Math.sin(x * 0.005 + t * 0.001) * Math.cos(y * 0.005 + t * 0.001);
+        }
+
+        function drawSmoke() {
+            // ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = 'rgba(0,0,0,0.08)';
+            ctx.fillRect(0, 0, w, h);
+
+            for (const p of smokeParticles) {
+                const n = noise(p.x + p.seed, p.y + p.seed, time);
+                p.x += n * 0.3;
+                p.y -= 0.2 + Math.abs(n) * 0.2;
+                if (p.y < -p.size) {
+                    p.y = h + p.size;
+                    p.x = Math.random() * w;
+                }
+
+                const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size);
+                grad.addColorStop(0, `rgba(200,200,200,${p.alpha})`);
+                grad.addColorStop(1, 'rgba(200,200,200,0)');
+
+                ctx.fillStyle = grad;
+                if (Math.hypot(p.x - cutout.x, p.y - cutout.y) < cutout.radius) continue;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.fill();
+
+            // ctx.globalCompositeOperation = 'source-over';
+        }
+
+        function loop() {
+            time++;
+            drawSmoke();
+            requestAnimationFrame(loop);
+        }
+
+        loop();
+
+        canvas.addEventListener('mousemove', e => {
+            cutout.x = e.clientX;
+            cutout.y = e.clientY;
+        });
+    </script>
+</body>
+
+</html>

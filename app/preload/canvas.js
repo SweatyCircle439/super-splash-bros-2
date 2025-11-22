@@ -14,6 +14,7 @@ let c;
 const update = () => {
     canvas.width = innerWidth;
     canvas.height = innerHeight;
+    generate.smoke();
 }
 
 /** Initiate the canvas. Only call this when the DOM is loaded! */
@@ -57,6 +58,11 @@ const screenshot = (filename) => canvas.toBlob(img => {
 /** Clears the entire canvas. */
 const clear = () => {
     c.clearRect(0, 0, width(), height());
+};
+
+let smokeProperties = {
+    particleCount: 1800,
+    particles: []
 };
 
 const options = {
@@ -125,8 +131,42 @@ const options = {
      */
     pattern: (image, repetition = "repeat") => {
         return c.createPattern(image, repetition);
+    },
+    smoke: {
+        setParticleCount: (count) => {
+            smokeProperties.particleCount = count;
+        },
+        getParticleCount: () => {
+            return smokeProperties.particleCount;
+        },
+        getParticles: () => {
+            return smokeProperties.particles;
+        },
+        setParticles: (particles) => {
+            smokeProperties.particles = particles;
+        }
     }
 };
+
+const generate = {
+    smokeParticle: () => {
+        const p = {
+            x: Math.random() * width(),
+            y: Math.random() * height(),
+            size: 50 + Math.random() * 80,
+            alpha: 0.01 + Math.random() * 0.02,
+            seed: (Math.random() * 1000) -500
+        }
+        smokeProperties.particles.push(p);
+        return p;
+    },
+    smoke: () => {
+        smokeProperties.particles = [];
+        for (let i = 0; i < smokeProperties.particleCount; i++) {
+            generate.smokeParticle();
+        }
+    }
+}
 
 const draw = {
     fill: {
@@ -274,9 +314,19 @@ const draw = {
      * @param {number} y
      * @param {number} w
      * @param {number} h
+     * @param {number} rotation rotation of the image in degrees
+     * @param {number} pivotPointX X pivot point (0 to 1)
+     * @param {number} pivotPointY Y pivot point (0 to 1)
      */
-    image: (image, x, y, w = image.width, h = image.height) => {
-        c.drawImage(image, x, y, w, h);
+    image: (image, x, y, w = image.width, h = image.height, rotation = 0, pivotPointX = 0.5, pivotPointY = 0.5) => {
+        const px = pivotPointX * w;
+        const py = pivotPointY * h;
+        c.save();
+        c.translate(x + px, y + py);
+        c.rotate(rotation * Math.PI / 180);
+        // c.translate(- (x + w / 2), - (y + h / 2));
+        c.drawImage(image, -px, -py, w, h);
+        c.restore();
     },
     /**
      * Draw a cropped image on the canvas.
@@ -403,15 +453,74 @@ const draw = {
         draw.fill.rect(theme.colors.ui.primary, x - w / 2, y - h / 2, w, h, 6);
         draw.stroke.rect((input.focused) ? "white" : (input.hovering) ? "#eee" : theme.colors.ui.secondary, x - w / 2, y - h / 2, w, h, 3, 6);
         draw.text({
-            text: input.value + (input.focused && trailingChar ? "_":""),
+            text: input.value + (input.focused && trailingChar ? "_": input.focused? "  " : ""),
             x: x - (input.keybind ? 0 : w / 2 - 8),
             y: y + 4,
             color: (invalid && input.keybind) ? theme.colors.error.foreground : "white",
             font: {size: input.size},
             alignment: (input.keybind) ? "center":"left",
-            baseline: "middle"
+            baseline: "middle",
+            maxWidth: input.width - 16
         });
         options.filter.remove("grayscale");
+    },
+    /**
+     * renders the smoke
+     * @param {number} t 
+     * @param {{
+     *  x: number,
+     *  y: number,
+     *  radius: number
+     * }}[] cutouts
+     * @param {boolean} updateSmoke
+     * @param {number} solidRenderDistance
+     * @param {boolean} optimizeBySolidity
+     * @param {number} smokeCLR the number to use for R,G and B of the color for the smoke
+     */
+    smoke: (t, cutouts, updateSmoke = true, solidRenderDistance = 200, optimizeBySolidity, smokeCLR = 200) => {
+        // c.globalCompositeOperation = "source-over";
+        // c.globalAlpha = 1;
+        // c.fillStyle = "rgba(0,0,0,0.06)";
+        // c.fillRect(0, 0, width(), height());
+
+        function noise(x, y, tt) {
+            const n = 5 * Math.sin(x * 0.01 + tt * 0.002) * Math.cos(y * 0.01 + tt * 0.002);
+            if (Math.abs(n) < 0) {
+                return Math.random() < 0.5? Math.random() * 5 : -(Math.random() * 5);
+            }
+          return n;
+        }
+
+        forp: for (const p of smokeProperties.particles) {
+            if (updateSmoke) {
+                const n = noise(p.x * p.seed, p.y * p.seed, t);
+                p.x += n * 0.3;
+                p.y -= 0.2 + Math.abs(n) * 0.2;
+                if (p.y < -p.size) {
+                    p.y = height();
+                    p.x = Math.random() * width();
+                }
+            }
+
+            // const grad = c.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size);
+            // grad.addColorStop(0, `rgba(200,200,200,${Math.min(1, p.alpha * 8)})`);
+            // grad.addColorStop(1, 'rgba(200,200,200,0)');
+            let renderSolid = optimizeBySolidity;
+            for (const cutout of cutouts) {
+                if (cutout !== false && Math.hypot(p.x - (cutout.x), p.y - (cutout.y)) < cutout.radius + solidRenderDistance) renderSolid = false;
+            }
+            c.fillStyle = renderSolid? 
+                `rgb(${smokeCLR}, ${smokeCLR}, ${smokeCLR})` :
+                `rgba(${smokeCLR}, ${smokeCLR}, ${smokeCLR}, ${p.alpha * (5 - ((smokeProperties.particleCount / 100) - 18))})`;
+            for (const cutout of cutouts) {
+                if (cutout !== false && Math.hypot(p.x - (cutout.x), p.y - (cutout.y)) < cutout.radius) {
+                        continue forp;
+                }
+            }
+            c.beginPath();
+            c.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            c.fill();
+        }
     }
 };
 
@@ -422,5 +531,6 @@ module.exports = {
     screenshot,
     clear,
     options,
+    generate,
     draw
 };

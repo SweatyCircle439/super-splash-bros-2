@@ -49,7 +49,7 @@ wss.on("listening", () => {
 
                 if (clientIndex === -1 && game.blacklist.includes(client.ip)) client.close(1000, "You have been banned from this game!");
                 else if (error && clientIndex > -1) game.players[clientIndex].connected = false;
-                else client.send(JSON.stringify(game.export()));
+                else client.send(JSON.stringify(game.export(clientIndex)));
             });
         });
         game.update();

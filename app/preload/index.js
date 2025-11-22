@@ -18,6 +18,7 @@ const Player = require("../class/game/Player");
 const Exclusive = require("../class/game/Exclusive");
 const Geyser = require("../class/game/Geyser");
 const Fish = require("../class/game/Fish");
+const Supply = require("../class/game/Supply");
 
 const state = {
     MAIN_MENU: 0,
@@ -171,7 +172,7 @@ const setConnectElementsState = (disabled) => {
  * @returns {string[]}
  */
 const getEnteredIP = () => {
-    return [
+    return Input.getInputById("LANHostName").value? Input.getInputById("LANHostName").value.split(".") : [
         Input.getInputById("IP-1").value,
         Input.getInputById("IP-2").value,
         Input.getInputById("IP-3").value,
@@ -963,11 +964,11 @@ Button.items = [
         text: "Connect",
         state: state.LAN_GAME_MENU,
         x: () => c.width(1/2),
-        y: () => c.height(1/2) + Button.height + 100,
+        y: () => c.height(1/2) + Button.height + 200,
         disabled: true,
         onclick: function() {
-            if (!network.isValidIP(getEnteredIP())) {
-                connectionMessage.show("Invalid IP address!", theme.colors.error.foreground, 3);
+            if (!network.isValidIP(getEnteredIP()) && !Input.getInputById("LANHostName").value.trim()) {
+                connectionMessage.show("Invalid IP address or hostname!", theme.colors.error.foreground, 3);
             } else {
                 setConnectElementsState(true);
                 connectionMessage.show("Connecting...");
@@ -1856,6 +1857,18 @@ Input.items = [
         }
     }),
     new Input({
+        id: "LANHostName",
+        state: state.LAN_GAME_MENU,
+        maxLength: 1e9,
+        x: () => c.width(1/2),
+        y: () => c.height(1/2) + 200,
+        width: 450,
+        ontype: (blurred) => {
+            Button.getButtonById("Connect").disabled = (Input.getInputById("LANHostName").value.trim().length === 0);
+            if (blurred) Button.getButtonById("Connect").onclick();
+        }
+    }),
+    new Input({
         id: "Username",
         state: state.PLAY_MENU,
         x: () => c.width(0.3),
@@ -1932,6 +1945,12 @@ Input.items = [
         onkeybindselected: updateKeybinds
     })
 ];
+
+let smokeTime = 0;
+let lastSmokeRender = 0;
+setInterval(() => {
+    smokeTime++;
+}, 1000 / 100);
 
 addEventListener("DOMContentLoaded", () => {
     c.init();
@@ -2208,14 +2227,16 @@ addEventListener("DOMContentLoaded", () => {
         frames++;
         if (socket.isOpen()) {
             game = socket.getGame();
-            if (replay && config.misc.recordReplays) replay.recordFrame(game);
+            if (replay && config.misc.recordReplays) replay.recordFrame(game, playerIndex);
         } else if (state.is(state.WAITING_LOCAL, state.PLAYING_LOCAL, state.WAITING_FREEPLAY, state.PLAYING_FREEPLAY, state.TUTORIAL_INTRO, state.TUTORIAL_GAME)) {
             instance.update();
-            game = instance.export();
-            if (replay && config.misc.recordReplays) replay.recordFrame(game);
+            console.log(playerIndex);
+            game = instance.export(playerIndex);
+            if (replay && config.misc.recordReplays) replay.recordFrame(game, playerIndex);
         } else if (state.is(state.WATCHING_REPLAY)) {
             replay.update();
             game = replay.frames[replay.frameIndex];
+            playerIndex = game.playerId;
         }
 
         if (game) {
@@ -2275,6 +2296,27 @@ addEventListener("DOMContentLoaded", () => {
                     const powerupName = Game.powerups[game.players[playerIndex].powerup.selected].name.toUpperCase();
                     bigNotification.show(`${powerupName} READY`, theme.colors.bigNotification.g, 120, 0.003);
                     audio._play(audio.powerup);
+                }
+                if (lgame.players[playerIndex].lives < game.players[playerIndex].lives && game.players[playerIndex].lives !== Infinity) {
+                    const delta = game.players[playerIndex].lives - lgame.players[playerIndex].lives;
+                    bigNotification.show(`+${delta} LIFE${delta !== 1? "S" : ""}`, theme.colors.bigNotification.g, 120, 0.003);
+                }
+                if (
+                    lgame.players[playerIndex].attacks.rocket.count < game.players[playerIndex].attacks.rocket.count - 1 &&
+                    game.players[playerIndex].lives !== Infinity
+                ) {
+                    const delta = game.players[playerIndex].attacks.rocket.count - lgame.players[playerIndex].attacks.rocket.count;
+                    bigNotification.show(`+${delta} ROCKET${delta !== 1? "S" : ""}`, theme.colors.bigNotification.g, 120, 0.003);
+                }
+                if (lgame.players[playerIndex].viewDistance < game.players[playerIndex].viewDistance) {
+                    const delta = game.players[playerIndex].viewDistance - lgame.players[playerIndex].viewDistance;
+                    bigNotification.show(`+${delta} VIEW DISTANCE`);
+                }
+                if (!lgame.snowStormActive && game.snowStormActive) {
+                    bigNotification.show(`SNOW STORM!`);
+                }
+                if (lgame.snowStormActive && !game.snowStormActive) {
+                    bigNotification.show(`STORM OVER`);
                 }
                 if (lgame.players[playerIndex].lives > 0 && game.players[playerIndex].lives === 0) {
                     bigNotification.show("GAME OVER", theme.colors.bigNotification.r, 200, 0.008);
@@ -2440,6 +2482,8 @@ addEventListener("DOMContentLoaded", () => {
             c.draw.fill.rect(c.options.pattern(image.stars), 0, 0, c.width(), c.height());
             c.options.setOpacity();
             c.draw.fill.rect(c.options.gradient(0, 0, 0, c.height(1.5), {pos: 0, color: "transparent"}, {pos: 1, color: theme.colors.text.light}), 0, 0, c.width(), c.height());
+        } else if (theme.current === "snowy") {
+            c.options.setShadow("lightblue");
         }
 
         const drawWater = () => {
@@ -2475,8 +2519,34 @@ addEventListener("DOMContentLoaded", () => {
             const offset = {x: (c.width() - image.platforms.width) / 2 + screenShake.x, y: c.height() - image.platforms.height + screenShake.y};
 
             if (theme.current === "foggy") c.options.filter.add("sepia(1)", "hue-rotate(150deg)", "brightness(1.5)");
+            if (theme.current === "snowy") c.options.filter.add("sepia(1)", "hue-rotate(150deg)", "brightness(100)");
             c.draw.image(image.platforms, offset.x, offset.y);
             c.options.filter.remove("sepia", "hue-rotate", "brightness");
+            if (game.supply.item) {
+                c.options.setOpacity(game.supply.item.takeable ? 1 : 0.35);
+                c.draw.image(image.supply, game.supply.item.x + offset.x, game.supply.item.y + offset.y, Supply.width, Supply.height, game.supply.item.rotation);
+                if (game.supply.item.parachuteDeployed) {
+                    c.options.filter.add(`hue-rotate(${Math.floor(game.supply.item.hue)}deg)`);
+                    c.draw.image(
+                        image.parachute,
+                        game.supply.item.x + offset.x - (image.parachute.width - Supply.width) / 2,
+                        game.supply.item.y - 20 + offset.y - (Supply.height * 2) + 30,
+                        image.parachute.width, image.parachute.height,
+                        game.supply.item.parachuteRotation,
+                        0.5, 1
+                    );
+                    c.options.filter.remove(`hue-rotate(${Math.floor(game.supply.item.hue)}deg)`);
+                }
+                if (game.supply.item.takeable && game.supply.item.takeValue > 0) c.draw.stroke.arc(
+                    theme.colors.players[game.supply.item.takenBy],
+                    game.supply.item.x + Supply.width / 2 + offset.x,
+                    game.supply.item.y + Supply.height / 2 + offset.y,
+                    Supply.width / 2,
+                    12,
+                    game.supply.item.takeValue
+                );
+            }
+            c.options.setShadow();
 
             for (const p of game.players) {
                 if (p === null) continue;
@@ -2491,6 +2561,18 @@ addEventListener("DOMContentLoaded", () => {
 
                 if (p.powerup.active && p.powerup.selected === Player.powerup.INVISIBILITY) c.options.setOpacity((playerIndex === p.index || state.current === state.WATCHING_REPLAY) ? 0.2 : 0);
                 if (frames % 4 < 2 || game.ping - p.respawn >= p.spawnProtection) c.draw.croppedImage(image.sprites, p.index * 128, Number(p.facing === "l") * 128, 128, 128, p.x + offset.x, p.y + offset.y, p.size, p.size);
+                if (p.parachuteDeployed) {
+                    c.options.filter.add(...p.parachuteFilter.split(", "));
+                    c.draw.image(
+                        image.parachute,
+                        p.x + offset.x - (image.parachute.width - p.size) / 2,
+                        p.y - 115 + offset.y - (p.size * 2),
+                        image.parachute.width, image.parachute.height,
+                        Math.min(Math.max(p.vx * -10, -45), 45),
+                        0.5, 1
+                    );
+                    c.options.filter.remove(...p.parachuteFilter.split(", "));
+                }
                 c.options.setOpacity();
 
                 if (playerIndex === p.index) c.draw.fill.triangleUD(theme.colors.ui.indicator, p.x + p.size / 2 + offset.x, p.y + offset.y - 32, 40, 20);
@@ -2570,7 +2652,7 @@ addEventListener("DOMContentLoaded", () => {
             if (game.fish.item) {
                 c.options.setOpacity(game.fish.item.takeable ? 1 : 0.35);
                 c.options.setShadow(theme.colors.text.light, 15);
-                c.draw.image(image.fish, game.fish.item.x + offset.x, game.fish.item.y + offset.y, Fish.width, Fish.height);
+                c.draw.image(image.fish, game.fish.item.x + offset.x, game.fish.item.y + offset.y, Fish.width, Fish.height, game.fish.item.rotation);
                 if (game.fish.item.takeable && game.fish.item.takeValue > 0) c.draw.stroke.arc(
                     theme.colors.players[game.fish.item.takenBy],
                     game.fish.item.x + Fish.width / 2 + offset.x,
@@ -2586,6 +2668,20 @@ addEventListener("DOMContentLoaded", () => {
             const parallellogramWidth = Math.min(350, Math.max(150, (c.width() - 150) / game.startPlayerCount));
             const spacing = (c.width() - game.startPlayerCount * parallellogramWidth) / game.startPlayerCount;
             let i = 0;
+            const thisP = game.players[playerIndex];
+            if (theme.current === "foggy" || game.snowStormActive) {
+                if (true) {
+                    lastSmokeRender = smokeTime;
+                    c.draw.smoke(smokeTime, [
+                        ...game.players.map(p => p && (Math.abs(p.vy) + Math.abs(p.vx) >= 1) ? {
+                            x: p.x + offset.x,
+                            y: p.y + offset.y,
+                            radius: c.height() / 5
+                        } : false),
+                        thisP? { x: thisP.x + offset.x, y: thisP.y + offset.y, radius: thisP.viewDistance } : false,
+                    ], true, 200, false, game.snowStormActive? 255 : 200);
+                }
+            }
             for (const p of game.players) {
                 if (p === null) continue;
 
@@ -2624,7 +2720,11 @@ addEventListener("DOMContentLoaded", () => {
                 c.options.filter.remove("brightness");
 
                 c.options.setShadow(theme.colors.shadow, 2);
-                for (let l=0; l<p.lives; l++) c.draw.croppedImage(image.sprites, p.index * 128, 0, 128, 128, x + offsets.lives + l * 20, y - 19, 16, 16);
+                if (p.lives === Infinity) {
+                    c.draw.text({text: "∞", x: x + offsets.lives + 4, y: y - 19, color: theme.colors.text.light, font: {size: 16}, alignment: "left", baseline: "middle"});
+                }else {
+                    for (let l=0; l<p.lives; l++) c.draw.croppedImage(image.sprites, p.index * 128, 0, 128, 128, x + offsets.lives + l * 20, y - 19, 16, 16);
+                }
                 c.options.setShadow(theme.colors.shadow, 3, 1, 1);
                 c.draw.text({text: p.name, x: x + 11, y: y + 85, color: theme.colors.text.light, font: {size: nameSize}, alignment: "left", maxWidth: parallellogramWidth - 35});
                 if (p.lives >= 1 && p.connected) {
@@ -2669,7 +2769,7 @@ addEventListener("DOMContentLoaded", () => {
 
             const m = Math.max(0, Math.floor(game.remaining / 60));
             const s = ("0" + Math.max(0, game.remaining % 60)).slice(-2);
-            const liquid = (theme.current === "slime") ? "Slime" : (theme.current === "lava") ? "Lava" : "Water";
+            const liquid = (theme.current === "snowy") ? "Snow" : (theme.current === "slime") ? "Slime" : (theme.current === "lava") ? "Lava" : "Water";
             const text = (state.current === state.TUTORIAL_GAME) ? ""
              : (game.winner !== null) ? `Returning to menu in ${m}:${s}`
              : (game.remaining >= 0) ? `${liquid} starts rising in ${m}:${s}`
@@ -2740,6 +2840,7 @@ addEventListener("DOMContentLoaded", () => {
 
             c.draw.text({text: "...or join a game on this network:", x: c.width(0.5) + state.change.x, y: c.height(0.5) - 50, font: {size: 32, style: "bold", shadow: true}});
             c.draw.text({text: "IP address:", x: c.width(0.5) - 230 + state.change.x, y: c.height(0.5) + 60, font: {size: 24, shadow: true}, alignment: "left"});
+            c.draw.text({text: "Hostname:", x: c.width(0.5) - 230 + state.change.x, y: c.height(0.5) + 150, font: {size: 24, shadow: true}, alignment: "left"});
             c.options.setOpacity(connectionMessage.a);
             c.draw.text({text: connectionMessage.text, x: c.width(0.5) + state.change.x, y: c.height(0.5) + Button.height + 180, color: connectionMessage.color ?? theme.getTextColor(), font: {size: 30, style: "bold", shadow: true}});
             c.options.setOpacity();

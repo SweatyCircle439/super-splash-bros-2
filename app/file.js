@@ -14,6 +14,7 @@
  *  damageTaken: number,
  *  timesSplashed: number,
  *  fishCollected: number,
+ *  supplysCollected: number,
  *  traveledX: number,
  *  traveledY: number
  * }} Statistics

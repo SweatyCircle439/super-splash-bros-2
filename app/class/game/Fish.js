@@ -8,6 +8,7 @@ class Fish {
     takeValue;
     collides;
     collidesWithTaker;
+    rotation = 0;
 
     static start = 10000;
     static frequency = 20000;
@@ -46,6 +47,8 @@ class Fish {
         this.takeable = (Math.abs(this.vy) < 0.05);
         if (elapsed - this.t >= Fish.hideDelay) {
             this.vy += 0.7;
+            if (this.rotation < 180) this.rotation += 6;
+            else this.rotation = 180;
             if (this.y >= 800) keep = false;
         } else {
             this.vy /= 1.1;

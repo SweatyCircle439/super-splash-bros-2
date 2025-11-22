@@ -72,7 +72,10 @@ const parse = (data) => {
  * }} options
  */
 const open = (options) => {
-    ws = new WebSocket(`ws://${options.ip}:${port}`);
+    const url = new URL(options.ip);
+    if (!url.protocol.startsWith("ws")) url.protocol = "ws:";
+    if (!url.port) url.port = port;
+    ws = new WebSocket(url.href);
 
     const isHost = (options.ip === "127.0.0.1");
     const connectTimeout = setTimeout(() => {

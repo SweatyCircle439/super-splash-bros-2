@@ -119,7 +119,7 @@ class Replay {
         if (this.playbackRate <= -3) this.playbackRate = -3;
     }
 
-    recordFrame(frame) {
+    recordFrame(frame, playerId) {
         const data = JSON.parse(JSON.stringify(frame));
 
         if (!this.#isRecording) return;
@@ -140,6 +140,8 @@ class Replay {
                 if (p) delete p.keys;
             }
         }
+
+        data.playerId = playerId;
 
         this.frames.push(data);
     }

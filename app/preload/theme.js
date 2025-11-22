@@ -1,5 +1,5 @@
 /**
- * @typedef {"daylight" | "sunset" | "night" | "synthwave" | "foggy" | "lava" | "slime"} Themes
+ * @typedef {"daylight" | "sunset" | "night" | "synthwave" | "foggy" | "lava" | "slime" | "snowy"} Themes
  */
 
 const colors = {
@@ -10,7 +10,8 @@ const colors = {
         synthwave: "#1b023b",
         foggy: "#769aac",
         lava: "#410900",
-        slime: "#004a0b"
+        slime: "#004a0b",
+        snowy: "#90d1f1"
     },
     players: [
         "#ffd900", // yellow
@@ -33,7 +34,8 @@ const colors = {
 
 const filters = {
     lava: ["hue-rotate(190deg)", "brightness(0.6)", "saturate(2)"],
-    slime: ["hue-rotate(270deg)", "brightness(1.3)"]
+    slime: ["hue-rotate(270deg)", "brightness(1.3)"],
+    snowy: ["brightness(3)"]
 };
 
 module.exports = {
@@ -52,7 +54,8 @@ module.exports = {
         else if (from === "sunset") return "night";
         else if (from === "night") return "synthwave";
         else if (from === "synthwave") return "foggy";
-        else if (from === "foggy") return "lava";
+        else if (from === "foggy") return "snowy";
+        else if (from === "snowy") return "lava";
         else if (from === "lava") return "slime";
         else if (from === "slime") return "daylight";
     },
